@@ -20,6 +20,7 @@ class Song {
 	* @param {number} data.length
 	* @param {number} data.songHeight
 	* @param {{[key:string]:Layer}} data.layers
+	* @param {[object]} data.custom_instruments
 	*/
 	constructor(data={}){
 		this.title = data.title || ""
@@ -31,6 +32,7 @@ class Song {
 		this.length = data.length;
 		this.songHeight = data.songHeight;
 		this.layers = data.layers || {};
+		this.custom_instruments = data.custom_instruments || []
 	};
 };
 
@@ -46,6 +48,8 @@ class Layer {
 		this.notes = {};
 		this.volume = 100;
 		this.name = "";
+		this.panning = 100;
+		this.locked = false
 	};
 	/**
 	* Sets a note in the layer.
@@ -64,10 +68,13 @@ class Note {
 	* @param {number} key
 	* @property {number} pitch - used in the minecraft client. min 0 max 2
 	*/
-	constructor(instrument, key){
+	constructor(instrument, key, velocity, panning, pitch){
 		this.instrument = instrument;
         this.key = key;
-		this.pitch = keyToPitch[this.key-33] || 0;
+		this.pitch_converted = keyToPitch[this.key-33] || 0;
+		this.velocity = velocity
+		this.panning = panning
+		this.pitch = pitch
 	};
 	/**
 	* Gives you a packet to use with minecraft-protocol.
@@ -99,30 +106,42 @@ class Note {
 
 const keyToPitch = {
 	0: 0.5,
-    1: 0.53,
-    2: 0.56,
-    3: 0.6,
-    4: 0.63,
-    5: 0.67,
-    6: 0.7,
-    7: 0.76,
-    8: 0.8,
-    9: 0.84,
-    10: 0.9,
-    11: 0.94,
+    1: 0.529732,
+    2: 0.561231,
+    3: 0.594604,
+    4: 0.629961,
+    5: 0.667420,
+    6: 0.707107,
+    7: 0.749154,
+    8: 0.793701,
+    9: 0.840896,
+    10: 0.890899,
+    11: 0.943874,
     12: 1.0,
-    13: 1.06,
-    14: 1.12,
-    15: 1.18,
-    16: 1.26,
-    17: 1.34,
-    18: 1.42,
-    19: 1.5,
-    20: 1.6,
-    21: 1.68,
-    22: 1.78,
-    23: 1.88,
+    13: 1.059463,
+    14: 1.122462,
+    15: 1.189207,
+    16: 1.259921,
+    17: 1.334840,
+    18: 1.414214,
+    19: 1.498307,
+    20: 1.587401,
+    21: 1.681793,
+    22: 1.781797,
+    23: 1.887749,
     24: 2.0,
+	25: 2.059463,
+	26: 2.122462,
+	27: 2.189207,
+	28: 2.259921,
+	29: 2.334840,
+	30: 2.414214,
+	31: 2.498307,
+	32: 2.587401,
+	33: 2.681793,
+	34: 2.781797,
+	35: 2.887749,
+	36: 3.0,
 };
 
 const instrumentIds = {
@@ -166,7 +185,7 @@ function parse(data){
 	bb.readByte(); // auto save dur.
 	bb.readByte(); // time sig.
 	
-	// stats
+	// stats (used in editor)
 	bb.readInt();
 	bb.readInt();
 	bb.readInt();
@@ -174,19 +193,19 @@ function parse(data){
 	bb.readInt();
 	
 	let imported_name = bb.readIString();
-	bb.readByte(); // loop
-	bb.readByte(); // max loop
-	bb.readShort(); // loop start
+	let loop = bb.readByte() == 1? true: false; // loop
+	let loop_max_count = bb.readByte(); // max loop
+	let loop_start = bb.readShort(); // loop start
 	
 	let layers = {};
 	
-	function setNote(layer, ticks, instrument, key) {
+	function setNote(layer, ticks, instrument, key, velocity, panning, pitch_nbs) {
         let l = layers[layer];
         if (!l) {
             l = new Layer();
             layers[layer] = l;
         }
-        l.setNote(ticks, new Note(instrument, key));
+        l.setNote(ticks, new Note(instrument, key, velocity, panning, pitch_nbs));
     }
 	
 	let tick = -1;
@@ -206,9 +225,9 @@ function parse(data){
 			let instrument = bb.readByte();
 			let key = bb.readByte();
 			let velocity = bb.readByte();
-			let panning = bb.readByte();
+			let panning = bb.readUint8();
 			let pitch = bb.readShort();
-			setNote(layer, tick, instrument, key);
+			setNote(layer, tick, instrument, key, velocity, panning, pitch);
 		};
 	};
 	for (let i = 0; i < songHeight; i++) {
@@ -217,9 +236,25 @@ function parse(data){
 			l.name = bb.readIString();
 			l.locked = bb.readByte();
 			l.volume = bb.readByte();
-			l.streo = bb.readByte();
-		};
+			l.panning = bb.readUint8();
+		} else {
+			// Skip empty layer
+			bb.readIString();
+ 			bb.readByte();
+			bb.readByte();
+			bb.readUint8();
+		}
 	};
+
+	//Custom instruments
+	let custom_instruments_count = bb.readUint8()
+	let custom_instruments = []
+	for (let i = 0; i < custom_instruments_count; i++) {
+		custom_instruments.push({name: bb.readIString(), filename: bb.readIString(), key: bb.readByte()})
+		bb.readByte() // utilize the "Press piano key", used only in editor
+	}
+
+
 	return new Song({
 		title,
 		author,
@@ -229,7 +264,11 @@ function parse(data){
 		tempo,
 		length,
 		songHeight,
-		layers
+		layers,
+		custom_instruments,
+		loop,
+		loop_max_count,
+		loop_start
 	});
 };
 
